@@ -5,12 +5,11 @@ import XCTest
 final class ContextEncoderTests: XCTestCase {
     func testEncodesKnownAndCustomKeys() throws {
         let payload = ContextEncoder.payload(GroovyContext(
-            retailer: "asos", parcelStatus: "out_for_delivery", country: "GB", userId: "u-1",
+            retailer: "asos", parcelStatus: "out_for_delivery", country: "GB",
             custom: ["tier": .string("gold"), "count": .number(3), "member": .bool(true)]))
         XCTAssertEqual(payload["retailer"] as? String, "asos")
         XCTAssertEqual(payload["parcelStatus"] as? String, "out_for_delivery")
         XCTAssertEqual(payload["country"] as? String, "GB")
-        XCTAssertEqual(payload["userId"] as? String, "u-1")
         XCTAssertEqual(payload["tier"] as? String, "gold")
         XCTAssertEqual(payload["count"] as? Double, 3)
         XCTAssertEqual(payload["member"] as? Bool, true)
@@ -18,11 +17,23 @@ final class ContextEncoderTests: XCTestCase {
         XCTAssertNil(ContextEncoder.payload(GroovyContext())["retailer"])
     }
 
-    func testDropsABlankUserId() throws {
-        for blank in ["", "   ", "\n\t"] {
-            XCTAssertNil(ContextEncoder.payload(GroovyContext(userId: blank))["userId"])
-        }
-        XCTAssertNil(ContextEncoder.payload(GroovyContext(custom: ["userId": .string(" ")]))["userId"])
+    /// Spec 230 T016 (FR-006): no user ID leaves the SDK under any spelling, even as a custom key.
+    func testNeverSendsAUserIdUnderAnySpelling() throws {
+        let context = GroovyContext(retailer: "asos", custom: [
+            "userId": .string("u-1"), "userID": .string("u-2"), "user_id": .string("u-3"), "userid": .string("u-4"),
+            "tier": .string("gold"),
+        ])
+        let payload = ContextEncoder.payload(context)
+        XCTAssertEqual(Set(payload.keys), ["retailer", "tier"])
+        XCTAssertFalse(ContextEncoder.json(context).contains("u-"))
+        XCTAssertEqual(ContextEncoder.userIdKeys, ["userId", "userID", "user_id", "userid"])
+    }
+
+    func testTheContextHasNoUserId() throws {
+        // The interface: `GroovyContext` has no user ID (contracts/sdk-public-api.delta.md). A
+        // reflection check, so a reintroduced field fails here before it reaches the guide.
+        let labels = Mirror(reflecting: GroovyContext()).children.compactMap { $0.label }
+        XCTAssertEqual(labels, ["retailer", "parcelStatus", "country", "custom"])
     }
 
     func testKnownKeysWinOverCustomKeys() throws {

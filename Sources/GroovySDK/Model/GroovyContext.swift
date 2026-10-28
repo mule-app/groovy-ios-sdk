@@ -1,22 +1,21 @@
 import Foundation
 
-/// What the app knows about the parcel and the user, sent to the widget as `groovy:context`
-/// (data-model "Context"). The SDK does not validate values; Groovy's ad router does.
+/// What the app knows about the parcel, sent to the widget as `groovy:context` (data-model
+/// "Context"). The SDK does not validate values; Groovy's ad router does. Since 1.0.1 it carries no
+/// user ID: the SDK sends no customer identifier of any kind (spec 230 FR-006), and a custom key
+/// spelled as one is never sent.
 public struct GroovyContext: Equatable {
     public var retailer: String?
     public var parcelStatus: String?
     public var country: String?
-    /// A user ID the app may share under its users' consent. Empty or blank is not sent.
-    public var userId: String?
     /// Fields agreed at onboarding.
     public var custom: [String: GroovyContextValue]
 
     public init(retailer: String? = nil, parcelStatus: String? = nil, country: String? = nil,
-                userId: String? = nil, custom: [String: GroovyContextValue] = [:]) {
+                custom: [String: GroovyContextValue] = [:]) {
         self.retailer = retailer
         self.parcelStatus = parcelStatus
         self.country = country
-        self.userId = userId
         self.custom = custom
     }
 }

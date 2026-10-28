@@ -9,7 +9,7 @@ Swift Package Manager: in Xcode, File > Add Package Dependencies, and enter
 `https://github.com/mule-app/groovy-ios-sdk`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/mule-app/groovy-ios-sdk", from: "1.0.0")
+.package(url: "https://github.com/mule-app/groovy-ios-sdk", from: "1.0.1")
 ```
 
 ## Use
@@ -26,6 +26,9 @@ let widget = GroovyWidgetView(publisherId: "<your publisher ID>", accountId: "<y
 GroovyWidget(publisherId: "<your publisher ID>", accountId: "<your account ID>",
              placement: "tracking.top", context: GroovyContext(retailer: "…", parcelStatus: "…"))
 ```
+
+An offer opens only after a tap inside the widget, the SDK sends no user identifier, and the
+widget's storage is its own, gone when the app's process ends (1.0.1).
 
 Your publisher ID, account ID and the reserved height for your design come with your onboarding,
 together with Groovy's integration guide: the guide covers the context fields, the listener

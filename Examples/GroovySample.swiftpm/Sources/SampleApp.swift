@@ -6,7 +6,7 @@ import SwiftUI
 @main
 struct SampleApp: App {
     @StateObject private var settings = SampleSettings()
-    // `-SampleTab swiftui|uikit|two|settings` opens on that tab, for scripted runs.
+    // `-SampleTab swiftui|uikit|two|storage|settings` opens on that tab, for scripted runs.
     @State private var tab = UserDefaults.standard.string(forKey: "SampleTab") ?? "swiftui"
 
     init() {
@@ -24,6 +24,7 @@ struct SampleApp: App {
                 SwiftUIScreen().tabItem { Label("SwiftUI", systemImage: "swift") }.tag("swiftui")
                 UIKitScreen().tabItem { Label("UIKit", systemImage: "square.stack") }.tag("uikit")
                 TwoWidgetsScreen().tabItem { Label("Two", systemImage: "square.split.1x2") }.tag("two")
+                StorageScreen().tabItem { Label("Storage", systemImage: "internaldrive") }.tag("storage")
                 SettingsScreen().tabItem { Label("Settings", systemImage: "slider.horizontal.3") }.tag("settings")
             }
             .environmentObject(settings)
@@ -33,7 +34,8 @@ struct SampleApp: App {
 
 /// What the screens load, edited on the Settings tab. Launch arguments preset it for scripted runs:
 /// `-SamplePublisher`, `-SampleAccount`, `-SamplePlacement`, `-SampleVariant`, `-SampleInitialHeight`,
-/// `-SampleRetailer`, `-SampleParcelStatus`.
+/// `-SampleRetailer`, `-SampleParcelStatus`; `-SampleUserIdKey 1` adds a `user_id` custom key to the
+/// context (spec 230 quickstart case 10: the SDK drops it with a debug line).
 final class SampleSettings: ObservableObject {
     @Published var publisherId: String
     @Published var accountId: String
@@ -44,7 +46,7 @@ final class SampleSettings: ObservableObject {
     @Published var initialHeight: Double
     @Published var retailer: String
     @Published var parcelStatus: String
-    @Published var userId = ""
+    @Published var userIdKey: Bool
     @Published var log: [String] = []
 
     init() {
@@ -56,6 +58,7 @@ final class SampleSettings: ObservableObject {
         initialHeight = defaults.double(forKey: "SampleInitialHeight")
         retailer = defaults.string(forKey: "SampleRetailer") ?? "asos"
         parcelStatus = defaults.string(forKey: "SampleParcelStatus") ?? "out_for_delivery"
+        userIdKey = defaults.bool(forKey: "SampleUserIdKey")
     }
 
     var experiment: GroovyExperiment? {
@@ -63,7 +66,8 @@ final class SampleSettings: ObservableObject {
     }
 
     var context: GroovyContext {
-        GroovyContext(retailer: retailer, parcelStatus: parcelStatus, country: "GB", userId: userId.isEmpty ? nil : userId)
+        GroovyContext(retailer: retailer, parcelStatus: parcelStatus, country: "GB",
+                      custom: userIdKey ? ["user_id": .string("u-sentinel-230")] : [:])
     }
 
     func record(_ line: String) {

@@ -2,8 +2,8 @@ import Foundation
 import os
 
 /// `[Groovy]` lines at `Groovy.logLevel` (research R19). Callers pass only what is safe: types,
-/// heights, reasons, timings, host and path. Never a payload, the context, the user ID, the query
-/// (it holds the account ID) or a click URL.
+/// heights, reasons, timings, host and path. Never a payload, the context, the query (it holds the
+/// account ID) or a click URL.
 enum Log {
     private static let logger = Logger(subsystem: "com.joingroovy.sdk", category: "widget")
 

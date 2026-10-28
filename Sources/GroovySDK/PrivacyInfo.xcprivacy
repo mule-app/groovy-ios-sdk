@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Groovy SDK privacy manifest (spec 222 FR-014). The widget records which offers were shown,
-  opened and declined (Product Interaction) to serve and measure ads (Advertising Data). Neither is
-  linked to the user's identity by the SDK, nor used for tracking, which holds for apps that pass no
-  user ID. An app that passes `userId` declares User ID, and Product Interaction and Advertising
-  Data as linked, in its own App Privacy answers (the integration guide §8 says so and why).
+  Groovy SDK privacy manifest (spec 222 FR-014, spec 230). The widget records which offers were
+  shown, opened and declined (Product Interaction) to serve and measure ads (Advertising Data).
+  Neither is linked to the user's identity, nor used for tracking: since 1.0.1 the SDK carries no
+  user identifier and runs no third-party measurement from the device (the integration guide §8).
 -->
 <plist version="1.0">
 <dict>

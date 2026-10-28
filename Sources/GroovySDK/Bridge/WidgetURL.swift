@@ -29,7 +29,28 @@ struct WidgetConfiguration: Equatable {
 /// The protocol version this SDK speaks (contracts/bridge-v1.md "Protocol versions").
 let bridgeVersion = 1
 
+/// Spec 230 (the CTO's decision on PR 976) — what tells the widget document the SDK loaded apart
+/// from any other page of the widget host: the platform the address builder sets, the account ID
+/// it sends and the path it builds. Read by the navigation rule (`NavigationPolicy.isWidgetDocument`),
+/// so the main frame can never hold the hosted page outside SDK mode (data-model "Navigation rule").
+struct SdkMarker: Equatable {
+    let platform: String
+    let accountId: String
+    let path: String
+}
+
 enum WidgetURL {
+    /// The platform this SDK announces in `sdk_platform`.
+    static let platform = "ios"
+
+    /// The marker of a configured load, from the same values `build` puts in the address.
+    static func marker(for configuration: WidgetConfiguration) -> SdkMarker {
+        let publisher = configuration.publisherId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SdkMarker(platform: platform,
+                         accountId: configuration.accountId.trimmingCharacters(in: .whitespacesAndNewlines),
+                         path: "/v1/\(publisher)/frame.html")
+    }
+
     /// `https://<widget host>/v1/<publisherId>/frame.html?account_id&placement&widget_variant&
     /// experiment_id&variant&sdk_platform=ios&sdk_version&bridge=1` (data-model "Address parameters
     /// the SDK sets"). Never `publisher`, `country`, `region`, `ad_id`, `algorithm_name`,
@@ -56,7 +77,7 @@ enum WidgetURL {
             items.append(URLQueryItem(name: "variant", value: variant))
         }
         items += [
-            URLQueryItem(name: "sdk_platform", value: "ios"),
+            URLQueryItem(name: "sdk_platform", value: platform),
             URLQueryItem(name: "sdk_version", value: Groovy.version),
             URLQueryItem(name: "bridge", value: String(bridgeVersion)),
         ]

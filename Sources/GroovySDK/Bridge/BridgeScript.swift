@@ -8,7 +8,7 @@ import Foundation
 /// It forwards the widget's own `groovy:*` messages to the native `groovy` handler: only those the
 /// widget posted to this window (`event.source === window`, `event.origin === location.origin`),
 /// so a message a sub-frame posts to its parent is never forwarded, and never `groovy:context`,
-/// which is the SDK's own message and holds the user ID.
+/// which is the SDK's own message (the app's context).
 enum BridgeScript {
     static let handlerName = "groovy"
 
@@ -29,7 +29,7 @@ enum BridgeScript {
     /// The JavaScript that delivers the app's context to the widget, run in the main frame:
     /// `window.postMessage({type: "groovy:context", payload: <context>}, "https://<widget host>")`.
     /// The target is the widget's own origin, fixed, not `location.origin`: if the page were ever
-    /// somewhere else, the browser drops the message instead of handing it the user ID.
+    /// somewhere else, the browser drops the message instead of handing it the app's context.
     /// `contextJSON` is produced by `ContextEncoder`, never by concatenating app values.
     static func deliverContext(_ contextJSON: String, widgetHost: String) -> String {
         let origin = "\"https://\(widgetHost)\""
@@ -38,10 +38,23 @@ enum BridgeScript {
 }
 
 /// Encodes `GroovyContext` as the `groovy:context` payload (data-model "Context"): the known keys
-/// when set, the custom keys, and no `userId` when it is empty or blank. Known keys win over a
-/// custom key of the same name. A non-finite number is dropped (JSON has none; encoding one would
-/// raise an exception the app could not catch).
+/// when set and the custom keys, never a user ID (spec 230 FR-006: a custom key spelled `userId`,
+/// `userID`, `user_id` or `userid` is dropped with a debug line naming the key, never its value).
+/// Known keys win over a custom key of the same name. A non-finite number is dropped (JSON has
+/// none; encoding one would raise an exception the app could not catch).
 enum ContextEncoder {
+    /// The spellings the hosted widget and the router recognise as a user ID.
+    static let userIdKeys: Set<String> = ["userId", "userID", "user_id", "userid"]
+
+    /// The payload without any user-ID key.
+    static func withoutUserIdKeys(_ payload: [String: Any]) -> [String: Any] {
+        var clean = payload
+        for key in userIdKeys where clean.removeValue(forKey: key) != nil {
+            Log.debug("a custom context key is a user ID (\(key)): not sent")
+        }
+        return clean
+    }
+
     static func payload(_ context: GroovyContext) -> [String: Any] {
         var payload: [String: Any] = [:]
         for (key, value) in context.custom {
@@ -59,11 +72,7 @@ enum ContextEncoder {
         if let retailer = context.retailer { payload["retailer"] = retailer }
         if let parcelStatus = context.parcelStatus { payload["parcelStatus"] = parcelStatus }
         if let country = context.country { payload["country"] = country }
-        payload.removeValue(forKey: "userId")
-        if let userId = context.userId, !userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            payload["userId"] = userId
-        }
-        return payload
+        return withoutUserIdKeys(payload)
     }
 
     /// JSON text of `payload(context)`, sorted keys; `{}` if it could not be encoded.

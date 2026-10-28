@@ -9,7 +9,7 @@ public enum Groovy {
     }
 
     /// The SDK's version, recorded on Groovy's events (one number for iOS and Android per release).
-    public static let version = "1.0.0"
+    public static let version = "1.0.1"
 
     /// Internal: which Groovy environment the widget is loaded from. `.production` by default.
     /// Not part of the documented interface; any other value logs a warning on every load.
@@ -20,7 +20,7 @@ public enum Groovy {
 }
 
 /// How much the SDK logs. Lines start `[Groovy]` and go to `os.Logger`
-/// (subsystem `com.joingroovy.sdk`). Payloads, the context, the user ID and click URLs are never logged.
+/// (subsystem `com.joingroovy.sdk`). Payloads, the context and click URLs are never logged.
 public enum GroovyLogLevel: Int, Comparable {
     case none = 0, info, debug
 
