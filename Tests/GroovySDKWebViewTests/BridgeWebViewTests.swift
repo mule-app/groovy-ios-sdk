@@ -471,7 +471,7 @@ final class BridgeWebViewTests: XCTestCase {
           var spoofed = document.createElement('input'); spoofed.setAttribute('type', 'file');
           Object.defineProperty(spoofed, 'type', { value: 'text', configurable: true }); document.body.appendChild(spoofed);
           out.push(cancelled(spoofed));
-          var frame = document.createElement('iframe'); document.body.appendChild(frame);
+          var frame = document.createElement('iframe'); frame.srcdoc = '<p>s</p>'; document.body.appendChild(frame);
           frame.contentDocument.open(); frame.contentDocument.write('<input id="f" type="file">'); frame.contentDocument.close();
           var inFrame = frame.contentDocument.getElementById('f');
           out.push(!inFrame.dispatchEvent(new frame.contentWindow.MouseEvent('click', { bubbles: true, cancelable: true })));
@@ -531,6 +531,312 @@ final class BridgeWebViewTests: XCTestCase {
         }
         let srcdoc = try await run("window.__srcdoc", in: view) as? String
         XCTAssertEqual(srcdoc, "undefined,undefined,undefined")
+    }
+
+    /// Spec 232 (research R2): every kind of field, focused every way a page can, on the real engine.
+    /// The result lists whatever became active, so an empty list is the pass.
+    private static let fieldProbe = """
+    (function () {
+      var active = [];
+      function add(parent, id, make) { var el = make(); el.id = id; parent.appendChild(el); return el; }
+      function kinds(parent, prefix) {
+        return [
+          add(parent, prefix + 'plain', function () { return document.createElement('input'); }),
+          add(parent, prefix + 'password', function () { var i = document.createElement('input'); i.type = 'password'; return i; }),
+          add(parent, prefix + 'area', function () { return document.createElement('textarea'); }),
+          add(parent, prefix + 'editable', function () { var d = document.createElement('div'); d.contentEditable = 'true'; return d; }),
+          add(parent, prefix + 'modify', function () { var d = document.createElement('div'); d.setAttribute('style', '-webkit-user-modify: read-write'); d.tabIndex = 0; return d; })
+        ];
+      }
+      function check(doc, fields) {
+        fields.forEach(function (f) {
+          f.focus();
+          var root = f.getRootNode();
+          if (root.activeElement === f || doc.activeElement === f) { active.push(f.id); }
+        });
+      }
+      check(document, kinds(document.body, 'page-'));
+      var host = document.createElement('div'); document.body.appendChild(host);
+      var root = host.attachShadow({ mode: 'closed' });
+      if (!host.shadowRoot) { active.push('shadow-stayed-closed'); }
+      check(document, kinds(root, 'shadow-'));
+      var label = document.createElement('label'); label.htmlFor = 'page-plain'; document.body.appendChild(label);
+      label.click();
+      if (document.activeElement && document.activeElement.id === 'page-plain') { active.push('label'); }
+      var frame = document.createElement('iframe'); frame.srcdoc = '<p>s</p>'; document.body.appendChild(frame);
+      var foreign = frame.contentWindow.HTMLElement.prototype.focus;
+      document.querySelectorAll('input, textarea, [contenteditable]').forEach(function (f) {
+        foreign.call(f);
+        if (document.activeElement === f) { active.push('foreign-' + f.id); }
+      });
+      document.designMode = 'on';
+      if (document.designMode !== 'off') { active.push('designMode'); }
+      return JSON.stringify(active);
+    })()
+    """
+
+    private static let apiProbe = """
+    (function () {
+      function read(w) {
+        return [typeof w.ApplePaySession, typeof w.PaymentRequest, typeof w.ClipboardItem, typeof w.navigator.clipboard,
+                typeof w.navigator.share, typeof w.navigator.canShare].join(',');
+      }
+      var out = { page: read(window) };
+      out.exec = ['copy', 'CUT', 'paste'].map(function (c) { return document.execCommand(c); }).join(',');
+      var reads = 0;
+      out.shifting = document.execCommand({ toString: function () { return reads++ === 0 ? 'copy' : 'bold'; } });
+      out.reads = reads;
+      return JSON.stringify(out);
+    })()
+    """
+
+    func testFieldsTakeNoFocusFromScript() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let active = try await run(Self.fieldProbe, in: view) as? String
+        XCTAssertEqual(active, "[]")
+    }
+
+    func testFieldsTakeNoFocusAfterDocumentOpenAndWrite() async throws {
+        for rewrite in ["document.open(); document.write('<!doctype html><body></body>'); document.close();",
+                        "document.write('<!doctype html><body></body>'); document.close();"] {
+            let view = makeView()
+            await eventually { listener.events.contains(.loaded(250)) }
+            _ = try await run("\(rewrite) true", in: view)
+            let active = try await run(Self.fieldProbe, in: view) as? String
+            XCTAssertEqual(active, "[]", rewrite)
+            view.removeFromSuperview()
+        }
+    }
+
+    func testTheHostOfAClosedDeclarativeRootKeepsNoFocus() async throws {
+        // Served in the HTML, so no script can force it open: the allowlist blurs its host.
+        let page = Self.page.replacingOccurrences(of: "<div id=\"app\" style=\"height:250px\"></div>", with: """
+        <div id="app" style="height:250px"></div><div id="h" tabindex="0"><template shadowrootmode="closed"><input type="password" autofocus></template></div>
+        """)
+        let view = makeView(page: page)
+        await eventually { listener.events.contains(.loaded(250)) }
+        let script = """
+        (function () {
+          var h = document.getElementById('h');
+          h.focus();
+          return document.activeElement === h ? 'host' : 'none';
+        })()
+        """
+        let active = try await run(script, in: view) as? String
+        XCTAssertEqual(active, "none")
+    }
+
+    func testAutofocusIsBlurred() async throws {
+        let page = Self.page.replacingOccurrences(of: "<div id=\"app\" style=\"height:250px\"></div>", with: """
+        <div id="app" style="height:250px"></div><input id="af" type="password" autofocus>
+        """)
+        let view = makeView(page: page)
+        await eventually { listener.events.contains(.loaded(250)) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let active = try await run("document.activeElement && document.activeElement.id || ''", in: view) as? String
+        XCTAssertEqual(active, "")
+    }
+
+    func testPaymentClipboardAndShareAreGoneInThePage() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let probe = try await run(Self.apiProbe, in: view) as? String
+        XCTAssertEqual(probe, #"{"page":"undefined,undefined,undefined,undefined,undefined,undefined","exec":"false,false,false","shifting":false,"reads":1}"#)
+    }
+
+    func testAButtonKeepsFocusAndItsClick() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let result = try await run("""
+        (function () {
+          var b = document.createElement('button'); document.body.appendChild(b);
+          var clicks = 0; b.addEventListener('click', function () { clicks++; });
+          b.focus(); b.click();
+          return (document.activeElement === b) + ',' + clicks;
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "true,1")
+    }
+
+    func testAListenerAddedDuringDocumentOpenCannotStopTheGuards() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let result = try await run("""
+        (function () {
+          class Ahead extends HTMLElement {
+            disconnectedCallback() { window.addEventListener('touchend', function (e) { e.stopImmediatePropagation(); }, true); }
+          }
+          customElements.define('x-ahead', Ahead);
+          document.body.appendChild(document.createElement('x-ahead'));
+          document.open();
+          document.write('<!doctype html><body><input id="f"></body>');
+          document.close();
+          var e = new Event('touchend', { bubbles: true, cancelable: true });
+          document.getElementById('f').dispatchEvent(e);
+          return String(e.defaultPrevented);
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "true")
+    }
+
+    func testAScriptWrittenFromDOMContentLoadedCannotGetAheadOfTheGuards() async throws {
+        let page = Self.page.replacingOccurrences(of: "<div id=\"app\" style=\"height:250px\"></div>", with: """
+        <div id="app" style="height:250px"></div><script>
+        document.addEventListener('DOMContentLoaded', function () {
+          document.write('<body><input id="f"><script>addEventListener("touchend", function (e) { e.stopImmediatePropagation(); }, true);<' + '/script></body>');
+          document.close();
+        });
+        </script>
+        """)
+        let view = makeView(page: page)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        let result = try await run("""
+        (function () {
+          var e = new Event('touchend', { bubbles: true, cancelable: true });
+          document.getElementById('f').dispatchEvent(e);
+          return String(e.defaultPrevented);
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "true")
+    }
+
+    func testACaretInEditableContentIsRemovedAndAnEditableSvgKeepsNoFocus() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        _ = try await run("""
+        (function () {
+          var d = document.createElement('div'); d.id = 'caret'; d.contentEditable = 'true'; d.textContent = 'x'; document.body.appendChild(d);
+          getSelection().collapse(d.firstChild, 0);
+          var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('tabindex', '0'); s.setAttribute('style', '-webkit-user-modify: read-write');
+          document.body.appendChild(s); s.focus();
+          window.__svg = document.activeElement === s;
+          return true;
+        })()
+        """, in: view)
+        // `selectionchange` is delivered after the script.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let result = try await run("(function () { return getSelection().rangeCount + ',' + window.__svg; })()", in: view) as? String
+        XCTAssertEqual(result, "0,false")
+    }
+
+    func testAWriteArgumentsToStringCannotDropTheGuards() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let result = try await run("""
+        (function () {
+          var arg = { toString: function () { document.close(); return '<body><input id="w"><script>window.__ran = 1;<' + '/script></body>'; } };
+          document.write(arg);
+          document.close();
+          var e = new Event('touchend', { bubbles: true, cancelable: true });
+          document.getElementById('w').dispatchEvent(e);
+          return window.__ran + ',' + e.defaultPrevented;
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "1,true")
+    }
+
+    func testASetterOnTheArrayPrototypeCannotReplaceWhatIsWritten() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let result = try await run("""
+        (function () {
+          var evil = { toString: function () { document.close(); return '<body><input id="w"><script>window.__ran = 1;<' + '/script></body>'; } };
+          Object.defineProperty(Array.prototype, 0, { set: function () { Object.defineProperty(this, 0, { value: evil, configurable: true, writable: true }); }, configurable: true });
+          document.write('<body><input id="w"><script>window.__ran = 1;<' + '/script></body>');
+          delete Array.prototype[0];
+          document.close();
+          var e = new Event('touchend', { bubbles: true, cancelable: true });
+          document.getElementById('w').dispatchEvent(e);
+          return window.__ran + ',' + e.defaultPrevented;
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "1,true")
+    }
+
+    func testAnAllowedElementWithUserModifyKeepsNoFocus() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let result = try await run("""
+        (function () {
+          var a = document.createElement('a'); a.href = '#'; a.setAttribute('style', '-webkit-user-modify: read-write');
+          document.body.appendChild(a);
+          a.focus();
+          return String(document.activeElement === a);
+        })()
+        """, in: view) as? String
+        XCTAssertEqual(result, "false")
+    }
+
+    /// Spec 232 (research R4): what a frame the script misses still offers, one surface per run, by hand
+    /// (`TEST_RUNNER_GROOVY_MEASURE=<surface>`; some surfaces block on iOS 26, so CI skips it). One
+    /// synchronous script: the frame's initial document is unlocked only until the srcdoc loads, and
+    /// `unlocked` says whether the reading counts. The pasteboard is read from outside
+    /// (`xcrun simctl pbpaste`): `UIPasteboard` reads nil in this test host.
+    func testMeasureAFrameTheScriptMisses() async throws {
+        let surfaces = [
+            "copyInFrame": "var r = w.document.createRange(); w.document.body.textContent = 'from-page'; r.selectNodeContents(w.document.body); w.getSelection().removeAllRanges(); w.getSelection().addRange(r); out.value = w.document.execCommand('copy');",
+            "copyThroughFrame": "var d = document.createElement('div'); d.textContent = 'from-page'; document.body.appendChild(d); var q = document.createRange(); q.selectNodeContents(d); getSelection().removeAllRanges(); getSelection().addRange(q); out.value = w.Document.prototype.execCommand.call(document, 'copy');",
+            "write": "settle(w.navigator.clipboard.writeText('from-page'));",
+            "read": "settle(w.navigator.clipboard.readText());",
+            "share": "settle(w.navigator.share({ text: 'x' }));",
+        ]
+        guard let name = ProcessInfo.processInfo.environment["GROOVY_MEASURE"], let step = surfaces[name] else {
+            throw XCTSkip("run by hand: research R4")
+        }
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        _ = try await run("""
+        (function () {
+          var frame = document.createElement('iframe'); frame.srcdoc = '<p>s</p>'; document.body.appendChild(frame);
+          var w = frame.contentWindow, out = window.__measure = { unlocked: typeof w.navigator.geolocation !== 'undefined' };
+          function settle(p) { out.value = 'pending'; p.then(function () { out.value = 'resolved'; }, function (e) { out.value = 'rejected ' + e.name; }); }
+          try { \(step) } catch (e) { out.value = 'threw ' + e.name; }
+          return true;
+        })()
+        """, in: view)
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        let result = try await run("JSON.stringify(window.__measure)", in: view) as? String
+        print("[R4] \(name) \(result ?? "nil") presented \(String(describing: window.rootViewController?.presentedViewController))")
+    }
+
+    /// Spec 232 (research R6): settings a page cannot change.
+    func testAirPlayPictureInPictureAndLinkPreviewAreOff() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let web = try XCTUnwrap(webView(of: view))
+        XCTAssertFalse(web.configuration.allowsAirPlayForMediaPlayback)
+        XCTAssertFalse(web.configuration.allowsPictureInPictureMediaPlayback)
+        XCTAssertFalse(web.allowsLinkPreview)
+        XCTAssertFalse(web.configuration.preferences.isTextInteractionEnabled)
+    }
+
+    /// Spec 232 (research R3): the keyboard guard resigns a first responder inside the web view.
+    func testAKeyboardRaisedFromTheWidgetIsDismissed() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let web = try XCTUnwrap(webView(of: view))
+        func responder(in root: UIView) -> UIView? {
+            root.isFirstResponder ? root : root.subviews.lazy.compactMap(responder).first
+        }
+        let content = try XCTUnwrap(web.scrollView.subviews.first { String(describing: type(of: $0)).hasPrefix("WK") })
+        XCTAssertTrue(content.becomeFirstResponder())
+        XCTAssertNotNil(responder(in: web))
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        XCTAssertNil(responder(in: web))
+    }
+
+    /// Spec 232 (research R3): the keyboard guard leaves the host app's own field alone.
+    func testAHostFieldKeepsItsFirstResponder() async throws {
+        let view = makeView()
+        await eventually { listener.events.contains(.loaded(250)) }
+        let field = UITextField(frame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        window.rootViewController!.view.addSubview(field)
+        XCTAssertTrue(field.becomeFirstResponder())
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        XCTAssertTrue(field.isFirstResponder)
+        field.removeFromSuperview()
+        _ = view
     }
 
     func testTeardownReleasesTheView() async throws {

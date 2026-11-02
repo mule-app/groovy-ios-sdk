@@ -9,7 +9,7 @@ public enum Groovy {
     }
 
     /// The SDK's version, recorded on Groovy's events (one number for iOS and Android per release).
-    public static let version = "1.0.1"
+    public static let version = "1.0.2"
 
     /// Internal: which Groovy environment the widget is loaded from. `.production` by default.
     /// Not part of the documented interface; any other value logs a warning on every load.

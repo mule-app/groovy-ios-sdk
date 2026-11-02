@@ -76,7 +76,8 @@ public final class GroovyWidgetView: UIView {
     static let offerPairingWindow: TimeInterval = 1
 
     /// The monotonic clock the tap gate uses (never the wall clock, which the device can change).
-    static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+    /// Spec 232 (research R1): not the System Boot Time API, which Apple requires a declared reason for.
+    static func now() -> TimeInterval { TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 }
 
     public init(publisherId: String, accountId: String, placement: String? = nil,
                 widgetVariant: String? = nil, experiment: GroovyExperiment? = nil,
@@ -95,6 +96,14 @@ public final class GroovyWidgetView: UIView {
         setContentHuggingPriority(.required, for: .vertical)
         setContentCompressionResistancePriority(.required, for: .vertical)
         addGestureRecognizer(tapObserver)
+        // Spec 232 (research R3): a field in a frame the page script does not reach gets no keyboard.
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow),
+                                               name: UIResponder.keyboardWillShowNotification, object: nil)
+    }
+
+    /// `endEditing` resigns only a first responder inside the web view: a host app's field keeps its keyboard.
+    @objc private func keyboardWillShow() {
+        if webView?.endEditing(true) == true { Log.debug("keyboard dismissed from the widget") }
     }
 
     @available(*, unavailable, message: "GroovyWidgetView needs a publisher ID and an account ID: use init(publisherId:accountId:…)")
@@ -279,9 +288,15 @@ public final class GroovyWidgetView: UIView {
         // The video designs autoplay muted, as on the web; sound still needs a tap.
         config.mediaTypesRequiringUserActionForPlayback = .audio
         config.websiteDataStore = Self.dataStore
+        // Spec 232 (research R6): no AirPlay route and no picture in picture.
+        config.allowsAirPlayForMediaPlayback = false
+        config.allowsPictureInPictureMediaPlayback = false
+        // No selection handles or copy menu on a long press, whatever the page's CSS asks for.
+        config.preferences.isTextInteractionEnabled = false
 
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, 1)),
                              configuration: config)
+        view.allowsLinkPreview = false
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear

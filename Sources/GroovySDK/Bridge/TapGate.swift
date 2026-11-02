@@ -146,7 +146,7 @@ final class TapObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
         defer { state = .failed }
         guard let tracked, touches.contains(tracked), let view else { return }
         if sequence.ended(at: tracked.location(in: view), bounds: view.bounds, slop: Self.slop) {
-            onTap(ProcessInfo.processInfo.systemUptime)
+            onTap(GroovyWidgetView.now())
         }
     }
 

@@ -5,6 +5,30 @@ import XCTest
 /// within 5 seconds; at most four taps are kept; a decline consumes a tap; a drag, a touch released
 /// outside the view and a cancelled touch are not taps.
 final class TapGateTests: XCTestCase {
+    /// Spec 232 FR-001: every tap rule below runs on this clock.
+    func testTheClockMovesForwardOnly() throws {
+        let first = GroovyWidgetView.now()
+        Thread.sleep(forTimeInterval: 0.05)
+        let second = GroovyWidgetView.now()
+        XCTAssertGreaterThanOrEqual(second - first, 0.04)
+        XCTAssertLessThan(second - first, 5)
+    }
+
+    /// Spec 232 FR-001: an App Store rejection for every app otherwise.
+    func testNoRequiredReasonClockInTheSourcesAndNoneDeclared() throws {
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        var read = 0
+        for case let file as URL in files where ["swift", "xcprivacy"].contains(file.pathExtension) {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            read += 1
+            let banned = ["system" + "Uptime", "NSPrivacy" + "AccessedAPIType<"]
+            for word in banned { XCTAssertFalse(text.contains(word), "\(word) in \(file.lastPathComponent)") }
+        }
+        XCTAssertGreaterThan(read, 5, "the sources were found")
+    }
+
     func testNoTapAllowsNothing() throws {
         var gate = TapGate()
         XCTAssertFalse(gate.consume(at: 100))
